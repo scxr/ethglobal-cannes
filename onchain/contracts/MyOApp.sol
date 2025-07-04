@@ -178,7 +178,7 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
         }
 
         bool success = _executeRemote(proposalId, proposal);
-
+        require(success, "Remote execution failed");
         emit ProposalExecuted(proposalId);
     }
 

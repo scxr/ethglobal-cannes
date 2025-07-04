@@ -54,13 +54,7 @@ const EXECUTOR_ENFORCED_OPTIONS: OAppEnforcedOption[] = [
     },
 ]
 
-// To connect all the above chains to each other, we need the following pathways:
-// Optimism <-> Avalanche
-// Optimism <-> Arbitrum
-// Avalanche <-> Arbitrum
 
-// With the config generator, pathways declared are automatically bidirectional
-// i.e. if you declare A,B there's no need to declare B,A
 const pathways: TwoWayConfig[] = [
     // Sepolia Controller <-> Arbitrum Sepolia Executor
     [

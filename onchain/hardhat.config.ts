@@ -52,27 +52,27 @@ const config: HardhatUserConfig = {
     },
     networks: {
         sepolia: {
-            url: process.env.SEPOLIA_RPC || 'https://rpc.sepolia.org',
+            url: process.env.SEPOLIA_RPC || 'https://rpc.sepolia.org', // x
             accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
-        },
+        },  
         'arbitrum-sepolia': {
-            url: process.env.ARBITRUM_SEPOLIA_RPC || 'https://sepolia-rollup.arbitrum.io/rpc',
+            url: process.env.ARBITRUM_SEPOLIA_RPC || 'https://sepolia-rollup.arbitrum.io/rpc', // x
             accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
         },
         amoy: {
-            url: process.env.AMOY_RPC || 'https://rpc-amoy.polygon.technology',
+            url: process.env.AMOY_RPC || 'https://rpc-amoy.polygon.technology', // x
             accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
         },
         'bsc-testnet': {
-            url: process.env.BSC_TESTNET_RPC || 'https://data-seed-prebsc-1-s1.binance.org:8545',
+            url: process.env.BSC_TESTNET_RPC || 'https://data-seed-prebsc-1-s1.binance.org:8545', // x
             accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
         },
         'optimism-sepolia': {
-            url: process.env.OPTIMISM_SEPOLIA_RPC || 'https://sepolia.optimism.io',
+            url: process.env.OPTIMISM_SEPOLIA_RPC || 'https://sepolia.optimism.io', // x
             accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
         },
         'base-sepolia': {
-            url: process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org',
+            url: process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org', // x
             accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
         },
     },
