@@ -169,6 +169,12 @@ contract OmniDaoController is OApp, OAppOptionsType3 {
         emit VoteCast(proposalId, msg.sender, voteType);
     }
 
+
+
+    /**
+     * @notice Execute a passed proposal
+     * @param proposalId ID of the proposal to execute
+     */
     function executeProposal(uint256 proposalId) external payable nonReentrant {
         Proposal storage proposal = proposals[proposalId];
         require(proposal.id != 0, "Proposal does not exist");
@@ -187,6 +193,12 @@ contract OmniDaoController is OApp, OAppOptionsType3 {
         emit ProposalExecuted(proposalId);
     }
 
+    /**
+     * @notice Execute a proposal on remote chains
+     * @param proposalId ID of the proposal to execute
+     * @param proposal Proposal struct
+     * @return bool True if execution was successful
+     */
     function _executeRemote(
         uint256 proposalId,
         Proposal storage proposal
@@ -222,39 +234,181 @@ contract OmniDaoController is OApp, OAppOptionsType3 {
        return true;
     }
 
-    function executeLocal() internal {}
+
+    /**
+     * @notice Execute a proposal on the local chain
+     * @param proposal Proposal struct
+     */
+    function executeLocal(Proposal storage proposal) internal {
+        // TODO: Implement local execution
+    }
+
+    /**
+     * @notice Pause the contract for emergency
+     */
+    function emergencyPause() external  {
+        require(!isPaused, "Already paused");
+        require(isPausable[msg.sender], "Not an emergency guardian");
 
 
-    // ──────────────────────────────────────────────────────────────────────────────
-    // 1. Send business logic
-    //
-    // Example: send a simple string to a remote chain. Replace this with your
-    // own state-update logic, then encode whatever data your application needs.
-    // ──────────────────────────────────────────────────────────────────────────────
+        isPaused = true;
+        emit Paused(true);
 
+        _sendEmergencyAction("PAUSE_ALL", "Emergency pause activated");
+    }
+
+    function emergencyUnpause() external  {
+        require(isPaused, "Not paused");
+        require(isPausable[msg.sender], "Not an emergency guardian");
+        
+        isPaused = false;
+        _sendEmergencyAction("UNPAUSE_ALL", "Emergency pause deactivated");
+        emit Paused(false);
+    }
+
+
+    /**
+     * @notice Send an emergency action to all supported chains
+     * @param action The action to send
+     * @param reason The reason for the action
+     */
+    function _sendEmergencyAction(string memory action, string memory reason) internal {
+        uint32[] memory allChains = _getAllSupportedChains();
+        
+        for (uint256 i = 0; i < allChains.length; i++) {
+            uint32 chainId = allChains[i];
+            if (remoteExecutors[chainId] != address(0)) {
+                bytes memory message = abi.encode("EMERGENCY", action, reason, block.timestamp);
+                
+                bytes memory options = OptionsBuilder.newOptions()
+                    .addExecutorLzReceiveOption(100000, 0);
+
+                MessagingFee memory fee = MessagingFee(0.001 ether, 0);
+                
+                _lzSend(chainId, message, options, fee, payable(msg.sender));
+            }
+        }
+
+        emit EmergencyAction(msg.sender, action, allChains);
+    }
+
+    /**
+     * @notice Set a remote executor for a chain
+     * @param chainId The chain ID to set the executor for
+     * @param executor The executor address
+     */
+    function setRemoteExecutor(uint32 chainId, address executor) external onlyOwner {
+        remoteExecutors[chainId] = executor;
+        supportedChains[chainId] = true;
+        
+        emit RemoteExecutorUpdated(chainId, executor);
+    }
+
+    /**
+     * @notice Update the voting power for an account
+     * @param account The account to update the voting power for
+     * @param power The new voting power
+     */
+    function updateVotingPower(address account, uint256 power) external onlyOwner {
+        uint256 oldPower = votingPower[account];
+        votingPower[account] = power;
+        
+        totalVotingPower = totalVotingPower - oldPower + power;
+    }
+    
+    /**
+     * @notice Set the governance parameters
+     * @param _votingPeriod The voting period
+     * @param _quorumThreshold The quorum threshold
+     * @param _minVotingPower The minimum voting power
+     */
+    function setGovernanceParams(
+        uint256 _votingPeriod,
+        uint256 _quorumThreshold,
+        uint256 _minVotingPower
+    ) external onlyOwner {
+        votingPeriod = _votingPeriod;
+        quorumThreshold = _quorumThreshold;
+        minimumVotingPower = _minVotingPower;
+    }
+
+    /**
+     * @notice Check if a proposal has passed
+     * @param proposalId ID of the proposal to check
+     * @return bool True if the proposal has passed
+     */
+    function _proposalPassed(uint256 proposalId) internal view returns (bool) {
+        Proposal memory proposal = proposals[proposalId];
+        uint256 totalVotes = proposal.votesFor + proposal.votesAgainst;
+        
+        // Check quorum
+        if (totalVotes < (totalVotingPower * quorumThreshold) / 10000) {
+            return false;
+        }
+        
+        // Check majority
+        return proposal.votesFor > proposal.votesAgainst;
+    }
+
+    /**
+     * @notice Get a proposal
+     * @param proposalId ID of the proposal to get
+     * @return Proposal struct
+     */
+    function getProposal(uint256 proposalId) external view returns (Proposal memory) {
+        return proposals[proposalId];
+    }
+
+    /**
+     * @notice Get the voting power for an account
+     * @param account The account to get the voting power for
+     * @return uint256 The voting power for the account
+     */
+    function getVotingPower(address account) external view returns (uint256) {
+        return votingPower[account];
+    }
+
+    /**
+     * @notice Quote the gas needed to send a message
+     * @param targetChain The target chain ID
+     * @param message The message to send
+     * @param options The options for the message
+     * @param payInLzToken Whether to pay in ZRO token
+     * @return MessagingFee The gas fee
+     */
+    function quote(
+        uint32 targetChain,
+        bytes memory message,
+        bytes memory options,
+        bool payInLzToken
+    ) public view returns (MessagingFee memory) {
+        return _quote(targetChain, message, options, payInLzToken);
+    }
+
+    /**
+     * @notice Get the next nonce for a chain
+     * @param srcEid The source chain ID
+     * @param sender The sender address
+     * @return uint64 The next nonce
+     */
+    function nextNonce(uint32 srcEid, bytes32 sender) public view virtual returns (uint64) {
+        return endpoint.nextNonce(srcEid, sender);
+    }
+
+    /**
+     * @notice Receive ETH
+     */
+    receive() external payable {}
+
+    
     /// @notice Send a string to a remote OApp on another chain
     /// @param _dstEid   Destination Endpoint ID (uint32)
     /// @param _string  The string to send
     /// @param _options  Execution options for gas on the destination (bytes)
     function sendString(uint32 _dstEid, string calldata _string, bytes calldata _options) external payable {
-        // 1. (Optional) Update any local state here.
-        //    e.g., record that a message was "sent":
-        //    sentCount += 1;
 
-        // 2. Encode any data structures you wish to send into bytes
-        //    You can use abi.encode, abi.encodePacked, or directly splice bytes
-        //    if you know the format of your data structures
         bytes memory _message = abi.encode(_string);
 
-        // 3. Call OAppSender._lzSend to package and dispatch the cross-chain message
-        //    - _dstEid:   remote chain's Endpoint ID
-        //    - _message:  ABI-encoded string
-        //    - _options:  combined execution options (enforced + caller-provided)
-        //    - MessagingFee(msg.value, 0): pay all gas as native token; no ZRO
-        //    - payable(msg.sender): refund excess gas to caller
-        //
-        //    combineOptions (from OAppOptionsType3) merges enforced options set by the contract owner
-        //    with any additional execution options provided by the caller
         _lzSend(
             _dstEid,
             _message,
@@ -264,14 +418,7 @@ contract OmniDaoController is OApp, OAppOptionsType3 {
         );
     }
 
-    // ──────────────────────────────────────────────────────────────────────────────
-    // 2. Receive business logic
-    //
-    // Override _lzReceive to decode the incoming bytes and apply your logic.
-    // The base OAppReceiver.lzReceive ensures:
-    //   • Only the LayerZero Endpoint can call this method
-    //   • The sender is a registered peer (peers[srcEid] == origin.sender)
-    // ──────────────────────────────────────────────────────────────────────────────
+
 
     /// @notice Invoked by OAppReceiver when EndpointV2.lzReceive is called
     /// @dev   _origin    Metadata (source chain, sender address, nonce)
@@ -280,22 +427,29 @@ contract OmniDaoController is OApp, OAppOptionsType3 {
     /// @dev   _executor  Executor address that delivered the message
     /// @dev   _extraData Additional data from the Executor (unused here)
     function _lzReceive(
-        Origin calldata /*_origin*/,
-        bytes32 /*_guid*/,
+        Origin calldata _origin,
+        bytes32 _guid,
         bytes calldata _message,
-        address /*_executor*/,
-        bytes calldata /*_extraData*/
+        address _executor,
+        bytes calldata _extraData
     ) internal override {
-        // 1. Decode the incoming bytes into a string
-        //    You can use abi.decode, abi.decodePacked, or directly splice bytes
-        //    if you know the format of your data structures
-        string memory _string = abi.decode(_message, (string));
+        require(
+            remoteExecutors[_origin.srcEid] != address(0) &&
+            _origin.sender == bytes32(uint256(uint160(remoteExecutors[_origin.srcEid]))),
+            "Unauthorized sender"
+        );
 
-        // 2. Apply your custom logic. In this example, store it in `lastMessage`.
-        lastMessage = _string;
+        // Decode the response
+        (uint256 proposalId, bool success, string memory result) = abi.decode(
+            _message,
+            (uint256, bool, string)
+        );
 
+        // Handle the response (emit events, update state, etc.)
+        emit RemoteOperationSent(proposalId, _origin.srcEid, keccak256(_message));
         // 3. (Optional) Trigger further on-chain actions.
         //    e.g., emit an event, mint tokens, call another contract, etc.
         //    emit MessageReceived(_origin.srcEid, _string);
     }
+
 }
