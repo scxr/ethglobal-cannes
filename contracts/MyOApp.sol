@@ -4,17 +4,76 @@ pragma solidity ^0.8.22;
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OApp.sol";
 import { OAppOptionsType3 } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OAppOptionsType3.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-contract MyOApp is OApp, OAppOptionsType3 {
+contract OmniDaoController is OApp, OAppOptionsType3 {
     /// @notice Last string received from any remote chain
-    string public lastMessage;
+    // string public lastMessage;
+    struct Proposal {
+        uint256 proposalId;
+        address proposer;
+        string description;
+        uint256 votesFor;
+        uint256 votesAgainst;
+        uint256 endTime;
+        uint256 startTime;
+        bool executed;
+        ProposalType proposalType;
+        bytes executionData;
+        uint32[] targetChainIds;
+        bytes32[] remoteCallData;
+    }
+
+    enum VoteType {
+        FOR,
+        AGAINST,
+        ABSTAIN
+    }
+
+    enum ProposalType {
+        TREASURY_DELEGATION,
+        EMERGENCY,
+        GOVERNANCE_CHANGE,
+        PROTOCOL_UPGRADE,
+        PARAMETER_CHANGE,
+        OTHER
+    }
+
+    mapping(uint256 => Proposal) public proposals;
+    mapping(uint256 => mapping(address => VoteType)) public votes;
+    mapping(uint256 => mapping(address => bool)) public hasVoted;
+    mapping(address => uint256) public votingPower;
+    mapping(uint32 => bool) public supportedChains;
+    mapping(uint32 => address) public remoteExecutors;
+    mapping(bytes32 => bool) public executedOperations;
+    mapping(uint32 => uint256) public lastExecutionNonce;
+
+    uint256 public proposalCount;
+    uint256 public votingPeriod;
+    uint256 public minimumVotingPower;
+    uint256 public quorumThreshold;
+    uint256 public totalVotingPower;
+
+
+    bool public isPaused;
+    mapping(address => bool) public isPausable;
+
+    event ProposalCreated(uint256 indexed proposalId, address indexed proposer, string description, ProposalType proposalType);
+    event VoteCast(uint256 indexed proposalId, address indexed voter, VoteType vote);
+    event ProposalExecuted(uint256 indexed proposalId);
+    event ProposalCanceled(uint256 indexed proposalId);
+    event VotingPowerUpdated(address indexed voter, uint256 newVotingPower);
+    event ChainSupportUpdated(uint32 indexed chainId, bool supported);
+    event RemoteExecutorUpdated(uint32 indexed chainId, address executor);
+    event Paused(bool isPaused);
+    event RemoteOperationSent(uint32 indexed chainId, address indexed executor, bytes32 indexed operationId, bytes data);
+
+
 
     /// @notice Msg type for sending a string, for use in OAppOptionsType3 as an enforced option
     uint16 public constant SEND = 1;
 
-    /// @notice Initialize with Endpoint V2 and owner address
-    /// @param _endpoint The local chain's LayerZero Endpoint V2 address
-    /// @param _owner    The address permitted to configure this OApp
+
     constructor(address _endpoint, address _owner) OApp(_endpoint, _owner) Ownable(_owner) {}
 
     // ──────────────────────────────────────────────────────────────────────────────
@@ -43,6 +102,128 @@ contract MyOApp is OApp, OAppOptionsType3 {
         // with any additional execution options provided by the caller
         fee = _quote(_dstEid, _message, combineOptions(_dstEid, SEND, _options), _payInLzToken);
     }
+
+
+    /**
+     * @notice Create a new proposal
+     * @param description Human readable description
+     * @param proposalType Type of proposal
+     * @param executionData Local execution data (if any)
+     * @param targetChainIds Array of chain IDs to execute on
+     * @param remoteCallData Array of calldata for each target chain
+     */
+    function createProposal(
+        string memory description,
+        ProposalType proposalType,
+        bytes memory executionData,
+        uint32[] memory targetChainIds,
+        bytes32[] memory remoteCallData
+    ) external {
+        require(votingPower[msg.sender] >= minimumVotingPower, "Insufficient voting power");
+        require(targetChainIds.length == remoteCallData.length, "Array length mismatch");
+        require(!isPaused, "Contract is paused for emergency");
+        
+        uint256 proposalId = ++proposalCount;
+
+        proposals[proposalId] = Proposal({
+            proposalId: proposalId,
+            proposer: msg.sender,
+            description: description,
+            votesFor: 0,
+            votesAgainst: 0,
+            startTime: block.timestamp,
+            endTime: block.timestamp + votingPeriod,
+            executed: false,
+            proposalType: proposalType,
+            executionData: executionData,
+            targetChainIds: targetChainIds,
+            remoteCallData: remoteCallData
+        });
+
+        emit ProposalCreated(proposalId, msg.sender, description, proposalType);
+    }
+
+    /**
+     * @notice Cast a vote on a proposal
+     * @param proposalId ID of the proposal to vote on
+     * @param voteType Type of vote (FOR, AGAINST, ABSTAIN)
+     */
+    function vote(uint256 proposalId, VoteType voteType) external {
+        Proposal storage proposal = proposals[proposalId];
+        require(proposal.proposalId != 0, "Proposal does not exist");
+        require(block.timestamp <= proposal.endTime, "Voting period ended");
+        require(!hasVoted[proposalId][msg.sender], "Already voted");
+        require(votingPower[msg.sender] > 0, "No voting power");
+
+        hasVoted[proposalId][msg.sender] = true;
+        votes[proposalId][msg.sender] = voteType;
+
+        uint256 weight = votingPower[msg.sender];
+
+        if (voteType == VoteType.FOR) {
+            proposal.votesFor += weight;
+        } else if (voteType == VoteType.AGAINST) {
+            proposal.votesAgainst += weight;
+        }
+
+        emit VoteCast(proposalId, msg.sender, voteType);
+    }
+
+    function executeProposal(uint256 proposalId) external payable nonReentrant {
+        Proposal storage proposal = proposals[proposalId];
+        require(proposal.id != 0, "Proposal does not exist");
+        require(block.timestamp > proposal.endTime, "Voting period not ended");
+        require(!proposal.executed, "Already executed");
+        require(_proposalPassed(proposalId), "Proposal did not pass");
+
+        proposal.executed = true;
+
+        if (proposal.executionData.length > 0) {
+            _executeLocal(proposal.executionData);
+        }
+
+        bool success = _executeRemote(proposalId, proposal);
+
+        emit ProposalExecuted(proposalId);
+    }
+
+    function _executeRemote(
+        uint256 proposalId,
+        Proposal storage proposal
+    ) internal returns (bool) {
+       require(msg.value > 0, "No funds to cover gas");
+
+       uint256 totalChains = proposal.targetChainIds.length;
+       uint256 gasPerChain = msg.value / totalChains;
+
+       for (uint256 i = 0; i < totalChains; i++) {
+        uint32 targetChain = proposal.targetChainIds[i];
+        require(supportedChains[targetChain], "Unsupported chain");
+        require(remoteExecutors[targetChain] != address(0), "No executor on target chain");
+
+        bytes memory message = abi.encode(proposalId, proposal.proposalType, proposal.remoteCallData[i], block.timestamp);
+
+        bytes32 operationHash = keccak256(abi.encodePacked(proposalId, targetChain, i));
+
+        bytes memory options = OptionsBuilder.newOptions()
+            .addExecutorLzReceiveOption(200000, 0)
+            .addExecutorOrderedExecutionOption();
+
+        MessagingFee memory fee = MessagingFee(gasPerChain, 0);
+
+        _lzSend(targetChain, message, options, fee, payable(msg.sender));
+
+        executedOperations[operationHash] = true;
+        lastExecutionNonce[targetChain]++;
+
+        emit RemoteOperationSent(targetChain, remoteExecutors[targetChain], operationHash, proposal.remoteCallData[i]);
+       }
+
+       return true;
+    }
+
+    function executeLocal() internal {}
+
 
     // ──────────────────────────────────────────────────────────────────────────────
     // 1. Send business logic
