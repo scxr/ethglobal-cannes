@@ -10,8 +10,11 @@ import 'hardhat-contract-sizer'
 import '@nomiclabs/hardhat-ethers'
 import '@layerzerolabs/toolbox-hardhat'
 import { HardhatUserConfig, HttpNetworkAccountsUserConfig } from 'hardhat/types'
-
+import '@layerzerolabs/toolbox-hardhat'
+import 'hardhat-deploy'
 import { EndpointId } from '@layerzerolabs/lz-definitions'
+
+
 
 // Set your preferred authentication method
 //
@@ -34,49 +37,51 @@ if (accounts == null) {
     )
 }
 
+
+
+
 const config: HardhatUserConfig = {
-    paths: {
-        cache: 'cache/hardhat',
-    },
     solidity: {
-        compilers: [
-            {
-                version: '0.8.22',
-                settings: {
-                    optimizer: {
-                        enabled: true,
-                        runs: 200,
-                    },
-                },
+        version: '0.8.22',
+        settings: {
+            optimizer: {
+                enabled: true,
+                runs: 200,
             },
-        ],
+        },
     },
     networks: {
-        'optimism-testnet': {
-            eid: EndpointId.OPTSEP_V2_TESTNET,
-            url: process.env.RPC_URL_OP_SEPOLIA || 'https://optimism-sepolia.gateway.tenderly.co',
-            accounts,
+        sepolia: {
+            url: process.env.SEPOLIA_RPC || 'https://rpc.sepolia.org',
+            accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
         },
-        'avalanche-testnet': {
-            eid: EndpointId.AVALANCHE_V2_TESTNET,
-            url: process.env.RPC_URL_FUJI || 'https://avalanche-fuji.drpc.org',
-            accounts,
+        'arbitrum-sepolia': {
+            url: process.env.ARBITRUM_SEPOLIA_RPC || 'https://sepolia-rollup.arbitrum.io/rpc',
+            accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
         },
-        'arbitrum-testnet': {
-            eid: EndpointId.ARBSEP_V2_TESTNET,
-            url: process.env.RPC_URL_ARB_SEPOLIA || 'https://arbitrum-sepolia.gateway.tenderly.co',
-            accounts,
+        amoy: {
+            url: process.env.AMOY_RPC || 'https://rpc-amoy.polygon.technology',
+            accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
         },
-        hardhat: {
-            // Need this for testing because TestHelperOz5.sol is exceeding the compiled contract size limit
-            allowUnlimitedContractSize: true,
+        'bsc-testnet': {
+            url: process.env.BSC_TESTNET_RPC || 'https://data-seed-prebsc-1-s1.binance.org:8545',
+            accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+        },
+        'optimism-sepolia': {
+            url: process.env.OPTIMISM_SEPOLIA_RPC || 'https://sepolia.optimism.io',
+            accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+        },
+        'base-sepolia': {
+            url: process.env.BASE_SEPOLIA_RPC || 'https://sepolia.base.org',
+            accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
         },
     },
     namedAccounts: {
         deployer: {
-            default: 0, // wallet address of index[0], of the mnemonic in .env
+            default: 0,
         },
     },
 }
 
 export default config
+

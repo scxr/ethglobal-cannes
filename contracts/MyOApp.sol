@@ -1,12 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.22;
-
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OApp.sol";
 import { OAppOptionsType3 } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OAppOptionsType3.sol";
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-
-contract OmniDaoController is OApp, OAppOptionsType3 {
+contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
     /// @notice Last string received from any remote chain
     // string public lastMessage;
     struct Proposal {
@@ -67,6 +64,7 @@ contract OmniDaoController is OApp, OAppOptionsType3 {
     event RemoteExecutorUpdated(uint32 indexed chainId, address executor);
     event Paused(bool isPaused);
     event RemoteOperationSent(uint32 indexed chainId, address indexed executor, bytes32 indexed operationId, bytes data);
+    event EmergencyAction(address indexed executor, string action, uint32[] chains);
 
 
 
@@ -450,6 +448,20 @@ contract OmniDaoController is OApp, OAppOptionsType3 {
         // 3. (Optional) Trigger further on-chain actions.
         //    e.g., emit an event, mint tokens, call another contract, etc.
         //    emit MessageReceived(_origin.srcEid, _string);
+    }
+
+    function _getAllSupportedChains() internal view returns (uint32[] memory) {
+        uint32[] memory allChains = new uint32[](supportedChains.length);
+        uint256 count = 0;
+        
+        for (uint256 i = 0; i < supportedChains.length; i++) {
+            if (supportedChains[i]) {
+                allChains[count] = i;
+                count++;
+            }
+        }
+        
+        return allChains;
     }
 
 }
