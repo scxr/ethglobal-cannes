@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.22;
+
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OApp.sol";
 import { OAppOptionsType3 } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OAppOptionsType3.sol";
+import { OptionsBuilder } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+
 contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
-    /// @notice Last string received from any remote chain
-    // string public lastMessage;
+    using OptionsBuilder for bytes;
+
     struct Proposal {
         uint256 proposalId;
         address proposer;
@@ -51,9 +55,11 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
     uint256 public quorumThreshold;
     uint256 public totalVotingPower;
 
-
     bool public isPaused;
     mapping(address => bool) public isPausable;
+
+    // Array to track all supported chain IDs for iteration
+    uint32[] public supportedChainsList;
 
     event ProposalCreated(uint256 indexed proposalId, address indexed proposer, string description, ProposalType proposalType);
     event VoteCast(uint256 indexed proposalId, address indexed voter, VoteType vote);
@@ -66,20 +72,10 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
     event RemoteOperationSent(uint32 indexed chainId, address indexed executor, bytes32 indexed operationId, bytes data);
     event EmergencyAction(address indexed executor, string action, uint32[] chains);
 
-
-
     /// @notice Msg type for sending a string, for use in OAppOptionsType3 as an enforced option
     uint16 public constant SEND = 1;
 
-
     constructor(address _endpoint, address _owner) OApp(_endpoint, _owner) Ownable(_owner) {}
-
-    // ──────────────────────────────────────────────────────────────────────────────
-    // 0. (Optional) Quote business logic
-    //
-    // Example: Get a quote from the Endpoint for a cost estimate of sending a message.
-    // Replace this to mirror your own send business logic.
-    // ──────────────────────────────────────────────────────────────────────────────
 
     /**
      * @notice Quotes the gas needed to pay for the full omnichain transaction in native gas or ZRO token.
@@ -96,11 +92,8 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
         bool _payInLzToken
     ) public view returns (MessagingFee memory fee) {
         bytes memory _message = abi.encode(_string);
-        // combineOptions (from OAppOptionsType3) merges enforced options set by the contract owner
-        // with any additional execution options provided by the caller
         fee = _quote(_dstEid, _message, combineOptions(_dstEid, SEND, _options), _payInLzToken);
     }
-
 
     /**
      * @notice Create a new proposal
@@ -167,15 +160,13 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
         emit VoteCast(proposalId, msg.sender, voteType);
     }
 
-
-
     /**
      * @notice Execute a passed proposal
      * @param proposalId ID of the proposal to execute
      */
     function executeProposal(uint256 proposalId) external payable nonReentrant {
         Proposal storage proposal = proposals[proposalId];
-        require(proposal.id != 0, "Proposal does not exist");
+        require(proposal.proposalId != 0, "Proposal does not exist");
         require(block.timestamp > proposal.endTime, "Voting period not ended");
         require(!proposal.executed, "Already executed");
         require(_proposalPassed(proposalId), "Proposal did not pass");
@@ -215,6 +206,7 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
 
         bytes32 operationHash = keccak256(abi.encodePacked(proposalId, targetChain, i));
 
+        // Fixed OptionsBuilder usage
         bytes memory options = OptionsBuilder.newOptions()
             .addExecutorLzReceiveOption(200000, 0)
             .addExecutorOrderedExecutionOption();
@@ -226,28 +218,30 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
         executedOperations[operationHash] = true;
         lastExecutionNonce[targetChain]++;
 
-        emit RemoteOperationSent(targetChain, remoteExecutors[targetChain], operationHash, proposal.remoteCallData[i]);
-       }
+        emit RemoteOperationSent(targetChain, remoteExecutors[targetChain], operationHash, abi.encodePacked(proposal.remoteCallData[i]));       }
 
        return true;
     }
 
-
     /**
      * @notice Execute a proposal on the local chain
-     * @param proposal Proposal struct
+     * @param executionData Encoded execution data
      */
-    function executeLocal(Proposal storage proposal) internal {
-        // TODO: Implement local execution
+    function _executeLocal(bytes memory executionData) internal {
+        // For testing, just emit an event
+        // In production, implement actual local execution logic
+        emit LocalExecutionCompleted(executionData);
     }
+
+    // Add missing event
+    event LocalExecutionCompleted(bytes executionData);
 
     /**
      * @notice Pause the contract for emergency
      */
-    function emergencyPause() external  {
+    function emergencyPause() external {
         require(!isPaused, "Already paused");
         require(isPausable[msg.sender], "Not an emergency guardian");
-
 
         isPaused = true;
         emit Paused(true);
@@ -255,7 +249,7 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
         _sendEmergencyAction("PAUSE_ALL", "Emergency pause activated");
     }
 
-    function emergencyUnpause() external  {
+    function emergencyUnpause() external {
         require(isPaused, "Not paused");
         require(isPausable[msg.sender], "Not an emergency guardian");
         
@@ -263,7 +257,6 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
         _sendEmergencyAction("UNPAUSE_ALL", "Emergency pause deactivated");
         emit Paused(false);
     }
-
 
     /**
      * @notice Send an emergency action to all supported chains
@@ -278,6 +271,7 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
             if (remoteExecutors[chainId] != address(0)) {
                 bytes memory message = abi.encode("EMERGENCY", action, reason, block.timestamp);
                 
+                // Fixed OptionsBuilder usage
                 bytes memory options = OptionsBuilder.newOptions()
                     .addExecutorLzReceiveOption(100000, 0);
 
@@ -296,6 +290,11 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
      * @param executor The executor address
      */
     function setRemoteExecutor(uint32 chainId, address executor) external onlyOwner {
+        // Add to supported chains list if not already present
+        if (!supportedChains[chainId]) {
+            supportedChainsList.push(chainId);
+        }
+        
         remoteExecutors[chainId] = executor;
         supportedChains[chainId] = true;
         
@@ -312,6 +311,8 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
         votingPower[account] = power;
         
         totalVotingPower = totalVotingPower - oldPower + power;
+        
+        emit VotingPowerUpdated(account, power);
     }
     
     /**
@@ -389,8 +390,8 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
      * @param sender The sender address
      * @return uint64 The next nonce
      */
-    function nextNonce(uint32 srcEid, bytes32 sender) public view virtual returns (uint64) {
-        return endpoint.nextNonce(srcEid, sender);
+    function nextNonce(uint32 srcEid, bytes32 sender) public view virtual override returns (uint64) {
+        return endpoint.outboundNonce(address(this), srcEid, sender);
     }
 
     /**
@@ -398,13 +399,13 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
      */
     receive() external payable {}
 
-    
-    /// @notice Send a string to a remote OApp on another chain
-    /// @param _dstEid   Destination Endpoint ID (uint32)
-    /// @param _string  The string to send
-    /// @param _options  Execution options for gas on the destination (bytes)
+    /**
+     * @notice Send a string to a remote OApp on another chain
+     * @param _dstEid Destination Endpoint ID (uint32)
+     * @param _string The string to send
+     * @param _options Execution options for gas on the destination (bytes)
+     */
     function sendString(uint32 _dstEid, string calldata _string, bytes calldata _options) external payable {
-
         bytes memory _message = abi.encode(_string);
 
         _lzSend(
@@ -416,14 +417,14 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
         );
     }
 
-
-
-    /// @notice Invoked by OAppReceiver when EndpointV2.lzReceive is called
-    /// @dev   _origin    Metadata (source chain, sender address, nonce)
-    /// @dev   _guid      Global unique ID for tracking this message
-    /// @param _message   ABI-encoded bytes (the string we sent earlier)
-    /// @dev   _executor  Executor address that delivered the message
-    /// @dev   _extraData Additional data from the Executor (unused here)
+    /**
+     * @notice Invoked by OAppReceiver when EndpointV2.lzReceive is called
+     * @param _origin Metadata (source chain, sender address, nonce)
+     * @param _guid Global unique ID for tracking this message
+     * @param _message ABI-encoded bytes (the string we sent earlier)
+     * @param _executor Executor address that delivered the message
+     * @param _extraData Additional data from the Executor (unused here)
+     */
     function _lzReceive(
         Origin calldata _origin,
         bytes32 _guid,
@@ -444,24 +445,39 @@ contract OmniDaoController is OApp, OAppOptionsType3, ReentrancyGuard {
         );
 
         // Handle the response (emit events, update state, etc.)
-        emit RemoteOperationSent(proposalId, _origin.srcEid, keccak256(_message));
-        // 3. (Optional) Trigger further on-chain actions.
-        //    e.g., emit an event, mint tokens, call another contract, etc.
-        //    emit MessageReceived(_origin.srcEid, _string);
+        // emit RemoteOperationSent(proposalId, _origin.srcEid, keccak256(_message), _message);
     }
 
+    /**
+     * @notice Get all supported chains
+     * @return uint32[] Array of supported chain IDs
+     */
     function _getAllSupportedChains() internal view returns (uint32[] memory) {
-        uint32[] memory allChains = new uint32[](supportedChains.length);
+        uint32[] memory result = new uint32[](supportedChainsList.length);
         uint256 count = 0;
         
-        for (uint256 i = 0; i < supportedChains.length; i++) {
-            if (supportedChains[i]) {
-                allChains[count] = i;
+        for (uint256 i = 0; i < supportedChainsList.length; i++) {
+            uint32 chainId = supportedChainsList[i];
+            if (supportedChains[chainId] && remoteExecutors[chainId] != address(0)) {
+                result[count] = chainId;
                 count++;
             }
         }
         
-        return allChains;
+        // Resize array to actual count
+        uint32[] memory finalResult = new uint32[](count);
+        for (uint256 i = 0; i < count; i++) {
+            finalResult[i] = result[i];
+        }
+        
+        return finalResult;
     }
 
+    /**
+     * @notice Get all supported chains (external function)
+     * @return uint32[] Array of supported chain IDs
+     */
+    function getAllSupportedChains() external view returns (uint32[] memory) {
+        return _getAllSupportedChains();
+    }
 }

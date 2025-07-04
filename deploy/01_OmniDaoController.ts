@@ -17,8 +17,10 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
         skipIfAlreadyDeployed: false,
     })
 
-    // Set governance parameters
-    const contract = await hre.ethers.getContract('OmniDaoController')
+    // Set governance parameters using hardhat-deploy's getContract
+    const contract = await deployments.get('OmniDaoController').then(deployment => 
+        hre.ethers.getContractAt('OmniDaoController', deployment.address)
+    )
     
     try {
         const currentPeriod = await contract.votingPeriod()

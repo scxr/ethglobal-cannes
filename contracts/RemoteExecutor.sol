@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.22;
 
-import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
-import { OAppOptionsType3 } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/libs/OAppOptionsType3.sol";
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { ReentrancyGuard } from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { OApp, Origin, MessagingFee } from "@layerzerolabs/oapp-evm/contracts/oapp/OApp.sol";
+import { OAppOptionsType3 } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OAppOptionsType3.sol";
 import { OptionsBuilder } from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 // Add these interfaces
 interface ILendingProtocol {
     function setInterestRate(uint256 rate) external;
@@ -25,13 +26,14 @@ interface IPausable {
     function pause() external;
     function unpause() external;
 }
+
 /**
  * @title RemoteExecutor
  * @notice Remote executor contract deployed on each target chain
  * @dev Receives and executes commands from the master DAO controller
  */
 contract RemoteExecutor is OApp, OAppOptionsType3, ReentrancyGuard {
-    using OAppOptionsType3 for bytes;
+    using OptionsBuilder for bytes;
 
     // ============ STATE VARIABLES ============
     
@@ -382,4 +384,73 @@ contract RemoteExecutor is OApp, OAppOptionsType3, ReentrancyGuard {
         _lzSend(masterChainId, message, options, fee, payable(address(this)));
     }
 
+    // ============ ADMIN FUNCTIONS ============
+    
+    /**
+     * @notice Set a protocol contract address
+     * @param contractName Name of the contract
+     * @param contractAddress Address of the contract
+     */
+    function setProtocolContract(string memory contractName, address contractAddress) external onlyOwner {
+        protocolContracts[contractName] = contractAddress;
+        emit ProtocolContractUpdated(contractName, contractAddress);
+    }
+    
+    /**
+     * @notice Update master controller address
+     * @param newMasterController New master controller address
+     */
+    function updateMasterController(address newMasterController) external onlyOwner {
+        masterController = newMasterController;
+    }
+    
+    /**
+     * @notice Add emergency guardian
+     * @param guardian Guardian address
+     */
+    function addEmergencyGuardian(address guardian) external onlyOwner {
+        emergencyGuardians[guardian] = true;
+    }
+    
+    /**
+     * @notice Remove emergency guardian
+     * @param guardian Guardian address
+     */
+    function removeEmergencyGuardian(address guardian) external onlyOwner {
+        emergencyGuardians[guardian] = false;
+    }
+    
+    /**
+     * @notice Emergency pause (guardian only)
+     */
+    function emergencyPause() external {
+        require(emergencyGuardians[msg.sender], "Not an emergency guardian");
+        paused = true;
+    }
+    
+    /**
+     * @notice Emergency unpause (owner only)
+     */
+    function emergencyUnpause() external onlyOwner {
+        paused = false;
+    }
+    
+    /**
+     * @notice Withdraw stuck tokens
+     * @param token Token address (address(0) for ETH)
+     * @param to Recipient address
+     * @param amount Amount to withdraw
+     */
+    function emergencyWithdraw(address token, address to, uint256 amount) external onlyOwner {
+        if (token == address(0)) {
+            payable(to).transfer(amount);
+        } else {
+            IERC20(token).transfer(to, amount);
+        }
+    }
+    
+    /**
+     * @notice Receive ETH
+     */
+    receive() external payable {}
 }
