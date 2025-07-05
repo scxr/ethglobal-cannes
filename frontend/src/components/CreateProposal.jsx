@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { sepolia, arbitrumSepolia, optimismSepolia, baseSepolia } from 'wagmi/chains';
+import { useAccount, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
+import contractAbi from '../assets/abis/OmniDaoController.json';
 
 const SUPPORTED_CHAINS = [
   sepolia,
@@ -7,7 +9,15 @@ const SUPPORTED_CHAINS = [
   optimismSepolia,
   baseSepolia,
 ];
-
+const PROPOSAL_TYPES = {
+    'TREASURY_DELEGATION': 0,
+    'EMERGENCY': 1,
+    'GOVERNANCE_CHANGE': 2,
+    'PROTOCOL_UPGRADE': 3,
+    'PARAMETER_CHANGE': 4,
+    'OTHER': 5
+  };
+  
 const TOKENS = [
   { symbol: 'ETH', name: 'Ethereum' },
   { symbol: 'ARB', name: 'Arbitrum' },
@@ -16,8 +26,16 @@ const TOKENS = [
   // Add more as needed
 ];
 
+const CONTRACT_ADDRESS = '0x1dCEd2fF4Db43Dd10B15140E3FDc590b01f3F321'; // replace with your address
+
 export function CreateProposal() {
+  const { address } = useAccount();
+  
+  const { data: txHash, writeContract, isPending, error: writeError } = useWriteContract();
+  const { isSuccess, isLoading } = useWaitForTransactionReceipt({ hash: txHash });
+
   const [title, setTitle] = useState('');
+  const [errors, setErrors] = useState([]);
   const [description, setDescription] = useState('');
   const [type, setType] = useState('TREASURY_DELEGATION');
   const [selectedChains, setSelectedChains] = useState([]);
@@ -29,7 +47,12 @@ export function CreateProposal() {
   const [swaps, setSwaps] = useState([
     { from: 'ETH', to: 'ARB', percent: '' }
   ]);
-  const [errors, setErrors] = useState([]);
+  // Effect to handle transaction success
+  React.useEffect(() => {
+    if (isSuccess) {
+      setSubmitted(true);
+    }
+  }, [isSuccess]);
 
   const handleChainToggle = (chainId) => {
     setSelectedChains((prev) =>
@@ -39,15 +62,33 @@ export function CreateProposal() {
     );
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    console.log('Address:', address);
+    console.log('Contract address:', CONTRACT_ADDRESS);
+    console.log('Args:', [title, description, swaps]);
+    
     const validationErrors = validate();
     if (validationErrors.length > 0) {
       setErrors(validationErrors);
       return;
     }
     setErrors([]);
-    setSubmitted(true);
+  
+    try {
+      console.log('About to call writeContract...');
+      await writeContract({
+        address: CONTRACT_ADDRESS,
+        abi: contractAbi,
+        functionName: 'createProposal',
+        args: [description, PROPOSAL_TYPES[type], "0x" , [1], ["0x0000000000000000000000000000000000000000000000000000000000000000"]],
+        account: address,
+      });
+      console.log('writeContract called successfully');
+    } catch (err) {
+      console.error('Error calling writeContract:', err);
+      setErrors([err.message || 'Contract call failed']);
+    }
   };
 
   const handleSwapChange = (idx, field, value) => {
@@ -222,6 +263,11 @@ export function CreateProposal() {
             </ul>
           </div>
         )}
+
+        {isPending && <p>Transaction pending...</p>}
+        {isLoading && <p>Waiting for confirmation...</p>}
+        {isSuccess && <p style={{ color: 'green' }}>Proposal submitted on-chain!</p>}
+        {writeError && <p style={{ color: 'red' }}>{writeError.message}</p>}
 
         <button type="submit" className="action-button">Submit Proposal</button>
       </form>
