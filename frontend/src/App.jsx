@@ -1,19 +1,28 @@
 import { useState } from 'react'
 import { ConnectButton } from '@rainbow-me/rainbowkit';
 import { useAccount, useBalance, useChainId, useSwitchChain } from 'wagmi';
+import { ViewProposals } from './components/ViewProposals';
+import { CreateProposal } from './components/CreateProposal';
 // import { ContractInteraction } from './components/ContractInteraction';
 import './App.css'
 
 function App() {
+  const [showProposals, setShowProposals] = useState(false);
+  const [showCreateProposal, setShowCreateProposal] = useState(false);
   const { address, isConnected } = useAccount();
   const chainId = useChainId();
-  const { chains, switchChain } = useSwitchChain();
+  const { chains, switchNetwork } = useSwitchChain();
   const { data: balance } = useBalance({
     address,
   });
 
-  // Get current chain info
-  const currentChain = chains.find(chain => chain.id === chainId);
+  if (showCreateProposal) {
+    return <CreateProposal />;
+  }
+
+  if (showProposals) {
+    return <ViewProposals />;
+  }
 
   return (
     <div className="App">
@@ -28,7 +37,7 @@ function App() {
           <div className="wallet-info">
             <h2>Wallet Information</h2>
             <p><strong>Address:</strong> {address}</p>
-            <p><strong>Network:</strong> {currentChain?.name}</p>
+            <p><strong>Network:</strong> {chainId}</p>
             <p><strong>Balance:</strong> {balance?.formatted} {balance?.symbol}</p>
             
             {/* Network Switcher */}
@@ -38,8 +47,8 @@ function App() {
                 {chains.map((targetChain) => (
                   <button
                     key={targetChain.id}
-                    onClick={() => switchChain({ chainId: targetChain.id })}
-                    disabled={targetChain.id === chainId}
+                    onClick={() => switchNetwork?.(targetChain.id)}
+                    disabled={!switchNetwork || targetChain.id === chain?.id}
                     className="network-button"
                   >
                     {targetChain.name}
@@ -54,15 +63,13 @@ function App() {
             {/* Example DAO Actions */}
             <div className="dao-actions">
               <h3>DAO Actions</h3>
-              <button className="action-button">
+              <button className="action-button" onClick={() => setShowCreateProposal(true)}>
                 Create Proposal
               </button>
-              <button className="action-button">
+              <button className="action-button" onClick={() => setShowProposals(true)}>
                 View Proposals
               </button>
-              <button className="action-button">
-                Vote on Proposal
-              </button>
+
             </div>
           </div>
         )}
